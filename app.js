@@ -1,4 +1,5 @@
 const { ipcRenderer } = require('electron');
+const path = require('path');
 
 // Wait for DOM to be fully loaded before initializing
 document.addEventListener('DOMContentLoaded', () => {
@@ -62,7 +63,18 @@ document.addEventListener('DOMContentLoaded', () => {
     let currentChannel = null;
     let ytPlayer = null;
     let ytHls = null;
-    
+    let ytDash = null;
+
+    // Function to toggle buffering state
+    function toggleBuffering(isBuffering) {
+        const liveText = document.getElementById('liveText');
+        if (isBuffering) {
+            liveText.classList.add('buffering');
+        } else {
+            liveText.classList.remove('buffering');
+        }
+    }
+
     // Playlists management
     let playlists = JSON.parse(localStorage.getItem('playlists')) || [];
     let activePlaylistId = localStorage.getItem('activePlaylistId') || '';
@@ -250,7 +262,10 @@ document.addEventListener('DOMContentLoaded', () => {
         playlistItem.innerHTML = `
           <div class="playlist-info">
             <div class="playlist-name">${playlist.name}</div>
-            <div class="playlist-url">${playlist.url}</div>
+            <div class="playlist-url">
+              <i class="fa-solid ${playlist.isLocalFile ? 'fa-file' : 'fa-link'}"></i>
+              ${playlist.url}
+            </div>
           </div>
           <div class="playlist-actions">
             <button class="playlist-action-btn edit" title="Edit Playlist">
@@ -372,28 +387,58 @@ document.addEventListener('DOMContentLoaded', () => {
       showNotification(`Playlist "${name}" updated successfully`);
     }
     
-    // Function to add a new playlist
+    // File picker functionality
+    const browseFileBtn = document.getElementById('browseFileBtn');
+
+    browseFileBtn.addEventListener('click', () => {
+      ipcRenderer.send('open-file-dialog');
+    });
+
+    ipcRenderer.on('file-selected', (event, { filePath, error }) => {
+      if (error) {
+        showNotification('Error selecting file: ' + error);
+        return;
+      }
+
+      if (filePath) {
+        // Set the filename as the playlist name if empty
+        if (!playlistNameInput.value) {
+          const fileName = path.basename(filePath);
+          playlistNameInput.value = fileName.replace(/\.[^/.]+$/, '');
+        }
+
+        // Set the file path in the URL input
+        jsonUrlInput.value = filePath;
+        showNotification(`Selected file: ${path.basename(filePath)}`);
+      }
+    });
+
+    // Update addPlaylist and updatePlaylist functions to handle local files
     function addPlaylist(name, url) {
       if (!name || !url) return;
-      
+
+      // Check if it's a local file (has a path property)
+      const isLocalFile = url.includes('\\') || url.includes('/');
+
       const newPlaylist = {
         id: generateUniqueId(),
         name,
-        url
+        url,
+        isLocalFile
       };
-      
+
       playlists.push(newPlaylist);
       localStorage.setItem('playlists', JSON.stringify(playlists));
-      
+
       // If it's the first playlist, make it active
       if (playlists.length === 1) {
         activePlaylistId = newPlaylist.id;
         localStorage.setItem('activePlaylistId', activePlaylistId);
       }
-      
+
       renderPlaylists();
       showNotification(`Playlist "${name}" added successfully`);
-      
+
       // Clear input fields
       playlistNameInput.value = '';
       jsonUrlInput.value = '';
@@ -679,16 +724,22 @@ document.addEventListener('DOMContentLoaded', () => {
       
       const isFavorite = favorites[channel.name] || false;
       ytFavoriteBtn.innerHTML = `
-        <i class="fa-${isFavorite ? 'solid' : 'regular'} fa-heart"></i>
-        <span>${isFavorite ? 'Remove from Favorites' : 'Add to Favorites'}</span>
+          <i class="fa-${isFavorite ? 'solid' : 'regular'} fa-heart"></i>
+          <span>${isFavorite ? 'Remove from Favorites' : 'Add to Favorites'}</span>
       `;
       ytFavoriteBtn.classList.toggle('active', isFavorite);
       
       const { link: streamUrl, userAgent, cookie } = channel;
       
+      // Clean up existing players
       if (ytHls) {
         ytHls.destroy();
         ytHls = null;
+      }
+      
+      if (ytDash) {
+        ytDash.destroy();
+        ytDash = null;
       }
       
       if (ytPlayer) {
@@ -702,7 +753,6 @@ document.addEventListener('DOMContentLoaded', () => {
       video.id = 'ytVideoPlayer';
       video.style.width = '100%';
       video.style.height = '100%';
-      // Add fade-in animation class to the video element
       video.classList.add('fade-in-animation');
       document.getElementById('youtubeStylePlayer').appendChild(video);
       
@@ -724,7 +774,174 @@ document.addEventListener('DOMContentLoaded', () => {
       ipcRenderer.send('set-headers', { userAgent, cookie });
       
       ipcRenderer.once('headers-set', () => {
-        if (Hls.isSupported()) {
+        // Check if URL is a DASH stream
+        if (streamUrl.toLowerCase().endsWith('.mpd')) {
+          if (dashjs.supportsMediaSource()) {
+            ytDash = dashjs.MediaPlayer().create();
+            
+            // Check codec support before initializing
+            const videoElement = video;
+            const codecSupport = {
+              h264: videoElement.canPlayType('video/mp4; codecs="avc1.42E01E"') !== "",
+              h264High: videoElement.canPlayType('video/mp4; codecs="avc1.64001F"') !== ""
+            };
+            console.log('Codec support:', codecSupport);
+            
+            ytDash.initialize(video, streamUrl, true);
+            ytDash.updateSettings({
+              streaming: {
+                abr: {
+                  autoSwitchBitrate: {
+                    video: true,
+                    audio: true
+                  },
+                  initialBitrate: {
+                    audio: -1,
+                    video: -1
+                  }
+                },
+                fastSwitchEnabled: true,
+                stallThreshold: 0.5,
+                retryAttempts: {
+                  MPD: 3,
+                  MediaSegment: 3,
+                  InitializationSegment: 3,
+                  BitstreamSwitchingSegment: 3
+                },
+                retryIntervals: {
+                  MPD: 1000,
+                  MediaSegment: 1000,
+                  InitializationSegment: 1000,
+                  BitstreamSwitchingSegment: 1000
+                }
+              }
+            });
+            
+            // Add listeners for initialization
+            ytDash.on(dashjs.MediaPlayer.events.PLAYBACK_METADATA_LOADED, () => {
+              console.log('Playback metadata loaded');
+              const availableTracks = ytDash.getTracksFor('video');
+              console.log('Available video tracks:', availableTracks);
+            });
+            
+            // Setup quality switching for DASH
+            ytDash.on(dashjs.MediaPlayer.events.STREAM_INITIALIZED, () => {
+              const qualities = ytDash.getBitrateInfoListFor('video');
+              if (qualities && qualities.length > 0) {
+                const availableQualities = qualities.map((q, index) => {
+                  return {
+                    label: q.height ? `${q.height}p` : `${Math.round(q.bitrate/1000)} kbps`,
+                    value: index
+                  };
+                }).reverse();
+                
+                // Build options array for Plyr
+                const qualityOptions = availableQualities.map(q => q.label);
+                qualityOptions.unshift('Auto');
+                
+                // Create quality switching function
+                const qualitySwitcher = function(quality) {
+                  if (quality === 'Auto') {
+                    ytDash.updateSettings({
+                      'streaming': {
+                        'abr': {
+                          'autoSwitchBitrate': {
+                            'video': true
+                          }
+                        }
+                      }
+                    });
+                  } else {
+                    const levelIndex = availableQualities.findIndex(q => q.label === quality);
+                    if (levelIndex > -1) {
+                      ytDash.updateSettings({
+                        'streaming': {
+                          'abr': {
+                            'autoSwitchBitrate': {
+                              'video': false
+                            }
+                          }
+                        }
+                      });
+                      ytDash.setQualityFor('video', availableQualities[levelIndex].value);
+                    }
+                  }
+                };
+                
+                // Update Plyr's quality menu
+                updateQualityMenu(qualityOptions, qualitySwitcher);
+              }
+            });
+            
+            // Modify DASH event handlers
+            ytDash.on(dashjs.MediaPlayer.events.PLAYBACK_WAITING, () => {
+              toggleBuffering(true);
+            });
+            
+            ytDash.on(dashjs.MediaPlayer.events.PLAYBACK_PLAYING, () => {
+              toggleBuffering(false);
+            });
+            
+            ytDash.on(dashjs.MediaPlayer.events.BUFFER_EMPTY, () => {
+              toggleBuffering(true);
+            });
+            
+            ytDash.on(dashjs.MediaPlayer.events.BUFFER_LOADED, () => {
+              toggleBuffering(false);
+            });
+
+            ytDash.on(dashjs.MediaPlayer.events.ERROR, (error) => {
+              console.error('DASH playback error:', error);
+              
+              // Handle errors in a more robust way
+              if (error && error.error) {
+                const errorType = error.error.code || error.error;
+                
+                // Use error constants from dashjs if available
+                if (dashjs.Errors) {
+                  switch(errorType) {
+                    case 'manifestError':
+                    case 'MANIFEST_LOADER_LOADING_FAILURE':
+                      showNotification('Unable to load stream. Please check your internet connection.');
+                      break;
+                    case 'segmentError':
+                    case 'SEGMENT_BASE_LOADER_ERROR':
+                      showNotification('Stream segment loading failed. Retrying...');
+                      ytDash.play();
+                      break;
+                    case 'manifestLoadingError':
+                    case 'DOWNLOAD_ERR_MANIFEST':
+                      showNotification('Failed to load stream manifest. The stream may be offline.');
+                      break;
+                    case 'downloadError':
+                    case 'DOWNLOAD_ERR_CONTENT':
+                      showNotification('Failed to download stream content. Retrying...');
+                      setTimeout(() => ytDash.play(), 2000);
+                      break;
+                    default:
+                      showNotification('Playback error occurred. Attempting to recover...');
+                      console.log('Unknown error type:', errorType);
+                      ytDash.play();
+                  }
+                } else {
+                  // Fallback error handling if dashjs.Errors is not available
+                  showNotification('Stream playback error. Attempting to recover...');
+                  setTimeout(() => ytDash.play(), 2000);
+                }
+              }
+            });
+            
+            // Add playback recovery handlers
+            ytDash.on(dashjs.MediaPlayer.events.PLAYBACK_STALLED, () => {
+              toggleBuffering(true);
+              setTimeout(() => ytDash.play(), 1000);
+            });
+          } else {
+            showNotification('DASH playback is not supported in your browser.');
+          }
+        }
+        // Handle HLS streams
+        else if (Hls.isSupported()) {
           ytHls = new Hls({
             maxBufferLength: 30,
             maxMaxBufferLength: 60,
@@ -733,126 +950,163 @@ document.addEventListener('DOMContentLoaded', () => {
             lowLatencyMode: true,
             backBufferLength: 30,
             capLevelToPlayerSize: true,
-            autoStartLoad: true
+            autoStartLoad: true,
+            maxRetryAttempts: 5,
+            retryDelayMs: 1000,
+            manifestLoadingTimeOut: 10000,
+            manifestLoadingMaxRetry: 3,
+            manifestLoadingRetryDelay: 1000,
+            levelLoadingTimeOut: 10000,
+            levelLoadingMaxRetry: 4,
+            levelLoadingRetryDelay: 1000
           });
           
           ytHls.loadSource(streamUrl);
           ytHls.attachMedia(video);
           
-          // Setup quality switching
+          // Setup quality switching for HLS
           ytHls.on(Hls.Events.MANIFEST_PARSED, function(event, data) {
-            console.log('HLS Manifest Parsed - Quality Levels:', ytHls.levels.length);
-            
-            // Get available qualities
             const availableQualities = ytHls.levels.map((level, index) => {
               return {
                 label: level.height ? `${level.height}p` : `${Math.round(level.bitrate/1000)} kbps`,
                 value: index
               };
-            }).reverse(); // Higher quality first
+            }).reverse();
             
-            // Debug log quality levels detected
-            console.log('Available qualities:', availableQualities);
-            
-            // Build options array for Plyr
             const qualityOptions = availableQualities.map(q => q.label);
-            qualityOptions.unshift('Auto'); // Add Auto option at beginning
+            qualityOptions.unshift('Auto');
             
-            // Create quality switching function
             const qualitySwitcher = function(quality) {
               if (quality === 'Auto') {
-                ytHls.currentLevel = -1; // Auto
-                console.log('Set HLS to auto quality mode');
+                ytHls.currentLevel = -1;
               } else {
-                // Find the matching quality level
                 const levelIndex = availableQualities.findIndex(q => q.label === quality);
                 if (levelIndex > -1) {
                   ytHls.currentLevel = availableQualities[levelIndex].value;
-                  console.log(`Set HLS to level: ${availableQualities[levelIndex].value} (${quality})`);
                 }
               }
             };
             
             // Update Plyr's quality menu
-            ytPlayer.elements.settings.quality = qualityOptions;
-            
-            // Directly set quality options
-            if (ytPlayer.config.quality) {
-              ytPlayer.config.quality.options = qualityOptions;
-              ytPlayer.config.quality.forced = true;
-              ytPlayer.config.quality.onChange = qualitySwitcher;
-            }
-            
-            // Manually update quality menu
-            if (ytPlayer.elements.settings.panels.quality) {
-              // Force quality menu rebuild
-              const qualityMenu = ytPlayer.elements.settings.panels.quality.querySelector('[role="menu"]');
-              if (qualityMenu) {
-                qualityMenu.innerHTML = '';
-                
-                qualityOptions.forEach(quality => {
-                  const item = document.createElement('button');
-                  item.type = 'button';
-                  item.role = 'menuitemradio';
-                  item.className = 'plyr__control plyr__control--forward';
-                  item.value = quality;
-                  item.setAttribute('data-plyr', 'quality');
-                  item.textContent = quality;
-                  item.setAttribute('aria-checked', quality === 'Auto' ? 'true' : 'false');
-                  
-                  item.addEventListener('click', () => {
-                    qualitySwitcher(quality);
-                    
-                    // Update active state
-                    qualityMenu.querySelectorAll('[role="menuitemradio"]').forEach(el => {
-                      el.setAttribute('aria-checked', el.value === quality ? 'true' : 'false');
-                    });
-                  });
-                  
-                  qualityMenu.appendChild(item);
-                });
-              }
-            }
-            
-            // Start playback
-            ytPlayer.play().catch(error => {
-              console.error('Error playing video:', error);
-              showNotification('Failed to play video. Please try again.');
-            });
+            updateQualityMenu(qualityOptions, qualitySwitcher);
           });
           
-          ytHls.on(Hls.Events.ERROR, (event, data) => {
-            if (data.fatal) {
-              switch (data.type) {
-                case Hls.ErrorTypes.NETWORK_ERROR:
-                  showNotification('Network error. Attempting to reconnect...');
-                  ytHls.startLoad();
-                  break;
-                case Hls.ErrorTypes.MEDIA_ERROR:
-                  showNotification('Media error. Attempting to recover...');
-                  ytHls.recoverMediaError();
-                  break;
-                default:
-                  showNotification('Failed to play this channel. Please try another one.');
-                  ytHls.destroy();
-                  break;
-              }
+          // Modify HLS event handlers
+          ytHls.on(Hls.Events.BUFFER_APPENDING, () => {
+            if (ytPlayer.paused) {
+              ytPlayer.play().catch(console.error);
             }
+            toggleBuffering(false);
+          });
+          
+          ytHls.on(Hls.Events.BUFFER_EOS, () => {
+            toggleBuffering(false);
+          });
+          
+          ytHls.on(Hls.Events.BUFFER_FLUSHING, () => {
+            toggleBuffering(true);
           });
         } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
           video.src = streamUrl;
           video.addEventListener('loadedmetadata', () => {
             ytPlayer.play().catch(error => {
               console.error('Error playing video:', error);
-              showNotification('Failed to play video. Please try again.');
+              showNotification('Failed to start playback. Please try again.');
             });
           });
+          
+          // Add native HLS error handling
+          video.addEventListener('error', (e) => {
+            console.error('Video playback error:', e.target.error);
+            const error = e.target.error;
+            switch (error.code) {
+              case error.MEDIA_ERR_ABORTED:
+                showNotification('Playback was aborted. Please try again.');
+                break;
+              case error.MEDIA_ERR_NETWORK:
+                showNotification('Network error occurred. Please check your connection.');
+                break;
+              case error.MEDIA_ERR_DECODE:
+                showNotification('Stream decoding error. Attempting to recover...');
+                video.load();
+                video.play().catch(console.error);
+                break;
+              case error.MEDIA_ERR_SRC_NOT_SUPPORTED:
+                showNotification('This stream format is not supported.');
+                break;
+              default:
+                showNotification('An error occurred during playback.');
+            }
+          });
         } else {
-          showNotification('HLS playback is not supported in your browser.');
+          showNotification('Your browser does not support this stream format.');
         }
+        
+        // Add general video element event listeners
+        video.addEventListener('waiting', () => {
+          toggleBuffering(true);
+        });
+        
+        video.addEventListener('playing', () => {
+          toggleBuffering(false);
+        });
+        
+        video.addEventListener('stalled', () => {
+          toggleBuffering(true);
+          setTimeout(() => video.play().catch(console.error), 1000);
+        });
+        
+        video.addEventListener('canplay', () => {
+          toggleBuffering(false);
+        });
       });
     }
     
+    // Helper function to update Plyr's quality menu
+    function updateQualityMenu(qualityOptions, qualitySwitcher) {
+      ytPlayer.elements.settings.quality = qualityOptions;
+      
+      if (ytPlayer.config.quality) {
+        ytPlayer.config.quality.options = qualityOptions;
+        ytPlayer.config.quality.forced = true;
+        ytPlayer.config.quality.onChange = qualitySwitcher;
+      }
+      
+      if (ytPlayer.elements.settings.panels.quality) {
+        const qualityMenu = ytPlayer.elements.settings.panels.quality.querySelector('[role="menu"]');
+        if (qualityMenu) {
+          qualityMenu.innerHTML = '';
+          
+          qualityOptions.forEach(quality => {
+            const item = document.createElement('button');
+            item.type = 'button';
+            item.role = 'menuitemradio';
+            item.className = 'plyr__control plyr__control--forward';
+            item.value = quality;
+            item.setAttribute('data-plyr', 'quality');
+            item.textContent = quality;
+            item.setAttribute('aria-checked', quality === 'Auto' ? 'true' : 'false');
+            
+            item.addEventListener('click', () => {
+              qualitySwitcher(quality);
+              
+              qualityMenu.querySelectorAll('[role="menuitemradio"]').forEach(el => {
+                el.setAttribute('aria-checked', el.value === quality ? 'true' : 'false');
+              });
+            });
+            
+            qualityMenu.appendChild(item);
+          });
+        }
+      }
+      
+      // Start playback
+      ytPlayer.play().catch(error => {
+        console.error('Error playing video:', error);
+        showNotification('Failed to play video. Please try again.');
+      });
+    }
+
     // Load favorites carousel - simplified
     function loadFavoritesCarousel() {
       favoritesCarousel.innerHTML = '';
@@ -901,8 +1155,8 @@ document.addEventListener('DOMContentLoaded', () => {
       
       const isFavorite = favorites[channelName] || false;
       ytFavoriteBtn.innerHTML = `
-        <i class="fa-${isFavorite ? 'solid' : 'regular'} fa-heart"></i>
-        <span>${isFavorite ? 'Remove from Favorites' : 'Add to Favorites'}</span>
+          <i class="fa-${isFavorite ? 'solid' : 'regular'} fa-heart"></i>
+          <span>${isFavorite ? 'Remove from Favorites' : 'Add to Favorites'}</span>
       `;
       ytFavoriteBtn.classList.toggle('active', isFavorite);
     });

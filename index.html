@@ -13,6 +13,7 @@
   <link rel="stylesheet" href="css/styles.css">
   <script src="https://cdn.plyr.io/3.7.8/plyr.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+  <script src="https://cdn.dashjs.org/latest/dash.all.min.js"></script>
 </head>
 <body>
   <!-- Header -->
@@ -104,7 +105,7 @@
               </div>
             </div>
             <div class="player-meta">
-              <span>Live TV</span>
+              <span id="liveText">Live TV</span>
               <span>•</span>
               <span id="yt-channel-category" class="player-category">Category</span>
             </div>
@@ -178,9 +179,15 @@
           <label for="playlistNameInput">Playlist Name</label>
           <input type="text" id="playlistNameInput" placeholder="Enter a name for this playlist">
           
-          <label for="jsonUrlInput">Playlist URL</label>
-          <input type="url" id="jsonUrlInput" placeholder="Enter URL or path to M3U playlist file">
-          <p class="help-text">Supports M3U playlists with special headers</p>
+          <label for="jsonUrlInput">Playlist URL or Local File</label>
+          <div class="url-input-group">
+            <input type="url" id="jsonUrlInput" placeholder="Enter URL or select local M3U file">
+            <button id="browseFileBtn" class="btn btn-secondary" title="Browse local M3U file">
+              <i class="fa-solid fa-folder-open"></i>
+            </button>
+          </div>
+          <input type="file" id="m3uFileInput" accept=".m3u,.m3u8" style="display: none;">
+          <p class="help-text">Supports M3U playlists from URL or local files</p>
           
           <input type="hidden" id="editPlaylistId" value="">
           <div class="form-actions">

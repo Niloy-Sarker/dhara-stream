@@ -1,4 +1,4 @@
-const { app, BrowserWindow, session, ipcMain } = require('electron');
+const { app, BrowserWindow, session, ipcMain, dialog } = require('electron');
 const fs = require('fs');
 const path = require('path');
 
@@ -41,6 +41,25 @@ function createWindow() {
       event.reply('local-file-content', { content });
     } catch (error) {
       event.reply('local-file-content', { error: error.message });
+    }
+  });
+
+  // Handle open file dialog requests
+  ipcMain.on('open-file-dialog', async (event) => {
+    try {
+      const result = await dialog.showOpenDialog(mainWindow, {
+        properties: ['openFile'],
+        filters: [
+          { name: 'M3U Playlists', extensions: ['m3u', 'm3u8'] }
+        ]
+      });
+
+      if (!result.canceled && result.filePaths.length > 0) {
+        const filePath = result.filePaths[0];
+        event.reply('file-selected', { filePath });
+      }
+    } catch (error) {
+      event.reply('file-selected', { error: error.message });
     }
   });
 }

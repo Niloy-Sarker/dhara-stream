@@ -591,6 +591,21 @@ a {
   animation: fadeIn 0.5s ease;
 }
 
+.player-meta span.buffering {
+  animation: glow 1s ease-in-out infinite alternate;
+  color: #ff0000;
+  font-weight: bold;
+}
+
+@keyframes glow {
+  from {
+    text-shadow: 0 0 10px #ff0000, 0 0 20px #ff0000, 0 0 30px #ff0000;
+  }
+  to {
+    text-shadow: 0 0 20px #ff0000, 0 0 40px #ff0000, 0 0 60px #ff0000;
+  }
+}
+
 .player-category {
   display: inline-block;
   background-color: rgba(255, 255, 255, 0.1);
@@ -1257,4 +1272,32 @@ button, a, .channel-item, .carousel-item, .header-icon, .sidebar-category-tab, .
 
 .playlist-selector-item.drop-complete {
   animation: dropComplete 0.3s ease forwards;
+}
+
+.url-input-group {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+}
+
+.url-input-group input {
+  flex: 1;
+}
+
+.url-input-group button {
+  padding: 8px 12px;
+  height: auto;
+}
+
+/* File input styling */
+#m3uFileInput {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
