@@ -1218,3 +1218,43 @@ button, a, .channel-item, .carousel-item, .header-icon, .sidebar-category-tab, .
 .sidebar-category-tab:hover {
   box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
 }
+
+/* Drag and Drop Animations */
+.playlist-selector-item {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.playlist-selector-item.dragging {
+  opacity: 0.5;
+  transform: scale(1.02);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+  z-index: 1000;
+}
+
+.playlist-selector-item.drag-over-top {
+  border-top: 2px solid var(--accent-color);
+  transform: translateY(2px);
+  transition: transform 0.15s ease;
+}
+
+.playlist-selector-item.drag-over-bottom {
+  border-bottom: 2px solid var(--accent-color);
+  transform: translateY(-2px);
+  transition: transform 0.15s ease;
+}
+
+@keyframes dropComplete {
+  0% {
+    transform: scale(1.02);
+  }
+  50% {
+    transform: scale(0.98);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+.playlist-selector-item.drop-complete {
+  animation: dropComplete 0.3s ease forwards;
+}

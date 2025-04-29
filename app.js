@@ -117,25 +117,119 @@ document.addEventListener('DOMContentLoaded', () => {
     function renderPlaylistSelector() {
       playlistSelectorList.innerHTML = '';
       
-      playlists.forEach(playlist => {
+      playlists.forEach((playlist, index) => {
         const isActive = playlist.id === activePlaylistId;
         
         const playlistItem = document.createElement('div');
         playlistItem.className = `playlist-selector-item ${isActive ? 'active' : ''}`;
+        playlistItem.draggable = true;
+        playlistItem.dataset.playlistId = playlist.id;
+        playlistItem.dataset.index = index;
         
         playlistItem.innerHTML = `
+          <i class="fa-solid fa-grip-vertical drag-handle" style="margin-right: 8px; cursor: grab;"></i>
           <i class="fa-${isActive ? 'solid' : 'regular'} fa-circle-check"></i>
           <span class="playlist-selector-item-name">${playlist.name}</span>
         `;
         
-        playlistItem.addEventListener('click', () => {
-          activatePlaylist(playlist.id, true);
+        playlistItem.addEventListener('click', (e) => {
+          // Prevent activation when dragging
+          if (!e.target.classList.contains('drag-handle')) {
+            activatePlaylist(playlist.id, true);
+          }
         });
+        
+        // Drag and drop events
+        playlistItem.addEventListener('dragstart', handleDragStart);
+        playlistItem.addEventListener('dragover', handleDragOver);
+        playlistItem.addEventListener('drop', handleDrop);
+        playlistItem.addEventListener('dragend', handleDragEnd);
         
         playlistSelectorList.appendChild(playlistItem);
       });
     }
     
+    // Drag event handlers
+    let draggedItem = null;
+    let draggedIndex = null;
+
+    function handleDragStart(e) {
+      draggedItem = e.target;
+      draggedIndex = parseInt(draggedItem.dataset.index);
+      
+      // Add dragging class for visual feedback
+      draggedItem.classList.add('dragging');
+      
+      // Set cursor style for the drag operation
+      const dragIcon = new Image();
+      dragIcon.src = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+      e.dataTransfer.setDragImage(dragIcon, 0, 0);
+    }
+
+    function handleDragOver(e) {
+      e.preventDefault();
+      const targetItem = e.target.closest('.playlist-selector-item');
+      if (!targetItem || targetItem === draggedItem) return;
+      
+      // Remove any existing drag-over classes
+      document.querySelectorAll('.playlist-selector-item').forEach(item => {
+        item.classList.remove('drag-over-top', 'drag-over-bottom');
+      });
+      
+      const targetRect = targetItem.getBoundingClientRect();
+      const mouseY = e.clientY;
+      const threshold = targetRect.top + (targetRect.height / 2);
+      
+      if (mouseY < threshold) {
+        targetItem.classList.add('drag-over-top');
+      } else {
+        targetItem.classList.add('drag-over-bottom');
+      }
+    }
+
+    function handleDrop(e) {
+      e.preventDefault();
+      const targetItem = e.target.closest('.playlist-selector-item');
+      if (!targetItem || targetItem === draggedItem) return;
+      
+      // Remove drag-over classes
+      document.querySelectorAll('.playlist-selector-item').forEach(item => {
+        item.classList.remove('drag-over-top', 'drag-over-bottom');
+      });
+      
+      const targetIndex = parseInt(targetItem.dataset.index);
+      
+      // Reorder the playlists array
+      const [movedPlaylist] = playlists.splice(draggedIndex, 1);
+      playlists.splice(targetIndex, 0, movedPlaylist);
+      
+      // Save the new order to localStorage
+      localStorage.setItem('playlists', JSON.stringify(playlists));
+      
+      // Add drop animation to the target item
+      targetItem.classList.add('drop-complete');
+      
+      // Remove the animation class after it completes
+      setTimeout(() => {
+        targetItem.classList.remove('drop-complete');
+        // Re-render the playlist selector with the new order
+        renderPlaylistSelector();
+      }, 300);
+    }
+
+    function handleDragEnd(e) {
+      // Remove dragging class
+      draggedItem.classList.remove('dragging');
+      
+      // Clear any remaining drag styling
+      document.querySelectorAll('.playlist-selector-item').forEach(item => {
+        item.classList.remove('drag-over-top', 'drag-over-bottom');
+      });
+      
+      draggedItem = null;
+      draggedIndex = null;
+    }
+
     // Function to render the playlists list
     function renderPlaylists() {
       playlistsList.innerHTML = '';
